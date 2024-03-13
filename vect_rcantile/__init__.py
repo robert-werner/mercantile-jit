@@ -96,30 +96,35 @@ def _xy(lng, lat, xs, ys):
     sinlat = np.sin(np.radians(lat))
     ys[0] = 0.5 - 0.25 * np.log((1.0 + sinlat) / (1.0 - sinlat)) / np.pi
 
+
 @guvectorize([(float64, float64, int64, int64[:], int64[:], int64[:])],
              '(),(),()->(),(),()',
              nopython=True,
              target='parallel')
-def tile(lng, lat, zoom, xs, ys, zooms):
-
-    result = _xy(lng, lat)
-    x, y = result[0], result[1]
-    Z2 = 2 ** zoom
+def tile(lng, lat, zoom, xtile, ytile, ztile):
+    x = lng / 360.0 + 0.5
+    sinlat = np.sin(np.radians(lat))
+    y = 0.5 - 0.25 * np.log((1.0 + sinlat) / (1.0 - sinlat)) / np.pi
+    Z2 = math.pow(2, zoom)
+    ztile[0] = zoom
 
     if x <= 0:
-        xs[0] = 0
+        xtile[0] = 0
     elif x >= 1:
-        xs[0] = np.int64(Z2 - 1)
+        xtile[0] = np.int64(Z2 - 1)
     else:
         # To address loss of precision in round-tripping between tile
         # and lng/lat, points within EPSILON of the right side of a tile
         # are counted in the next tile over.
-        xs[0] = np.int64(np.floor((x + EPSILON) * Z2))
+        xtile[0] = np.int64(math.floor((x + EPSILON) * Z2))
 
     if y <= 0:
-        ys[0] = 0
+        ytile[0] = 0
     elif y >= 1:
-        ys[0] = np.int64(Z2 - 1)
+        ytile[0] = np.int64(Z2 - 1)
     else:
-        ys[0] = np.int64(np.floor((y + EPSILON) * Z2))
-    zooms[0] = zoom
+        ytile[0] = np.int64(np.floor((y + EPSILON) * Z2))
+
+
+if __name__ == '__main__':
+    print(tile(55.777287, 38.448906, 10))
