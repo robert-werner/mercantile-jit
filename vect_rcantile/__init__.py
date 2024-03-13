@@ -1,4 +1,8 @@
+import numpy as np
 from numba import guvectorize, float64
+
+from vect_rcantile.constants import RE
+
 
 @guvectorize([(float64[:], float64[:], float64[:], float64[:])], '(n),(n)->(n),(n)', target='parallel')
 def truncate_lnglat(lngs, lats, out_lngs, out_lats):
@@ -18,3 +22,16 @@ def truncate_lnglat(lngs, lats, out_lngs, out_lats):
             out_lats[i] = -90.0
         else:
             out_lats[i] = lats[i]
+
+
+@guvectorize([(float64[:], float64[:], float64[:], float64[:])], '(n),(n)->(n),(n)', target='parallel')
+def xy(lngs, lats, out_xs, out_ys):
+    for i in range(lngs.shape[0]):
+        out_xs[i] = RE * np.radians(lngs[i])
+
+        if lats[i] <= -90:
+            out_ys[i] = -np.inf
+        elif lats[i] >= 90:
+            out_ys[i] = np.inf
+        else:
+            out_ys[i] = RE * np.log(np.tan((np.pi * 0.25) + (0.5 * np.radians(lats[i]))))
