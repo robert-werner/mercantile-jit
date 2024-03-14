@@ -5,7 +5,6 @@ from numba import guvectorize, float64, int64
 
 from vect_rcantile.constants import RE, R2D, CE, EPSILON
 
-
 @guvectorize([(float64, float64, float64[:], float64[:])],
              '(),()->(),()',
              nopython=True,
@@ -93,8 +92,7 @@ def xy_bounds(x, y, zoom, lefts, bottoms, rights, tops):
              target='parallel')
 def _xy(lng, lat, xs, ys):
     xs[0] = lng / 360.0 + 0.5
-    sinlat = np.sin(np.radians(lat))
-    ys[0] = 0.5 - 0.25 * np.log((1.0 + sinlat) / (1.0 - sinlat)) / np.pi
+    ys[0] = 0.5 - 0.25 * np.log((1.0 + np.sin(np.radians(lat))) / (1.0 - np.sin(np.radians(lat)))) / np.pi
 
 
 @guvectorize([(float64, float64, int64, int64[:], int64[:], int64[:])],
@@ -103,20 +101,15 @@ def _xy(lng, lat, xs, ys):
              target='parallel')
 def tile(lng, lat, zoom, xtile, ytile, ztile):
     x = lng / 360.0 + 0.5
-    sinlat = np.sin(np.radians(lat))
-    y = 0.5 - 0.25 * np.log((1.0 + sinlat) / (1.0 - sinlat)) / np.pi
+    y = 0.5 - 0.25 * np.log((1.0 + np.sin(np.radians(lat))) / (1.0 - np.sin(np.radians(lat)))) / np.pi
     Z2 = math.pow(2, zoom)
     ztile[0] = zoom
-
     if x <= 0:
         xtile[0] = 0
     elif x >= 1:
         xtile[0] = np.int64(Z2 - 1)
     else:
-        # To address loss of precision in round-tripping between tile
-        # and lng/lat, points within EPSILON of the right side of a tile
-        # are counted in the next tile over.
-        xtile[0] = np.int64(math.floor((x + EPSILON) * Z2))
+        xtile[0] = np.int64(np.floor((x + EPSILON) * Z2))
 
     if y <= 0:
         ytile[0] = 0
@@ -126,5 +119,6 @@ def tile(lng, lat, zoom, xtile, ytile, ztile):
         ytile[0] = np.int64(np.floor((y + EPSILON) * Z2))
 
 
-if __name__ == '__main__':
-    print(tile(55.777287, 38.448906, 10))
+# TODO: quadkey ufunc
+# TODO: quadkey_to_tile ufunc
+# TODO: tiles ufunc (and how to paralellize it)
