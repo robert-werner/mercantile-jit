@@ -1,124 +1,113 @@
-import math
-
 import numpy as np
-from numba import guvectorize, float64, int64
+from numba import float64, int64, njit
 
-from vect_rcantile.constants import RE, R2D, CE, EPSILON
+from vect_rcantile.constants import RE, R2D
 
-@guvectorize([(float64, float64, float64[:], float64[:])],
-             '(),()->(),()',
-             nopython=True,
-             target='parallel')
-def truncate_lnglat(lng, lat, out_lng, out_lat):
+
+@njit('float64[:](float64, float64)', parallel=True, fastmath=True)
+def truncate_lnglat(lng, lat):
+    result = np.zeros((2), dtype=float64)
     if lng > 180.0:
-        out_lng[0] = 180.0
+        result[0] = 180.0
     elif lng < -180.0:
-        out_lng[0] = -180.0
+        result[0] = -180.0
     else:
-        out_lng[0] = lng
+        result[0] = lng
 
     # Truncate latitudes: similarly, directly modifying the output array
     if lat > 90.0:
-        out_lat[0] = 90.0
+        result[1] = 90.0
     elif lat < -90.0:
-        out_lat[0] = -90.0
+        result[1] = -90.0
     else:
-        out_lat[0] = lat
+        result[1] = lat
+    return result
 
 
-@guvectorize([(float64, float64, float64[:], float64[:])],
-             '(),()->(),()',
-             nopython=True,
-             target='parallel')
-def xy(lng, lat, out_xs, out_ys):
-    out_xs[0] = RE * np.radians(lng)
+@njit('float64[:](float64, float64, boolean)', parallel=True, fastmath=True)
+def xy(lng, lat, truncate=False):
+    result = np.zeros((2), dtype=float64)
+    if truncate:
+        lng, lat = truncate_lnglat(lng, lat)
+
+    result[0] = RE * np.radians(lng)
+
     if lat <= -90:
-        out_ys[0] = -np.inf
+        result[1] = -np.inf
     elif lat >= 90:
-        out_ys[0] = np.inf
+        result[1] = np.inf
     else:
-        out_ys[0] = RE * np.log(np.tan((np.pi * 0.25) + (0.5 * np.radians(lat))))
+        result[1] = RE * np.log(np.tan((np.pi * 0.25) + (0.5 * np.radians(lat))))
+
+    return result
 
 
-@guvectorize([(float64, float64, float64[:], float64[:])],
-             '(),()->(),()',
-             nopython=True,
-             target='parallel')
-def lnglat(x, y, out_lngs, out_lats):
-    out_lngs[0] = x * R2D / RE
-    out_lats[0] = ((np.pi * 0.5) - 2.0 * np.arctan(np.exp(-y / RE))) * R2D
+@njit('float64[:](float64, float64, boolean)', parallel=True, fastmath=True)
+def lnglat(x, y, truncate=False):
+    result = np.zeros((2), dtype=float64)
+    result[0], result[1] = (
+        x * R2D / RE,
+        ((np.pi * 0.5) - 2.0 * np.arctan(np.exp(-y / RE))) * R2D,
+    )
+    if truncate:
+        result[0], result[1] = truncate_lnglat(result[0], result[1])
+    return result
 
 
-@guvectorize([(int64, int64, int64, float64[:], float64[:])],
-             '(),(),()->(),()',
-             nopython=True,
-             target='parallel')
-def ul(x, y, zoom, out_lngs, out_lats):
+@njit('float64[:](int64, int64, int64)', parallel=True, fastmath=True)
+def ul(x, y, zoom):
+    result = np.zeros((2), dtype=float64)
     Z2 = 2 ** zoom
-    lon_deg_i = x / Z2 * 360.0 - 180.0
-    lat_rad_i = np.arctan(np.sinh(np.pi * (1 - 2 * y / Z2)))
-    lat_deg_i = np.degrees(lat_rad_i)
-    out_lngs[0] = lon_deg_i
-    out_lats[0] = lat_deg_i
+    lon_deg = x / Z2 * 360.0 - 180.0
+    lat_rad = np.arctan(np.sinh(np.pi * (1 - 2 * y / Z2)))
+    lat_deg = np.degrees(lat_rad)
+    result[0] = lon_deg
+    result[1] = lat_deg
+    return result
 
 
-@guvectorize([(int64, int64, int64, float64[:], float64[:], float64[:], float64[:])],
-             '(),(),()->(),(),(),()',
-             nopython=True,
-             target='parallel')
-def bounds(x, y, zoom, ul_lons_deg, lr_lats_deg, lr_lons_deg, ul_lats_deg):
-    Z2 = 2 ** zoom
-    ul_lons_deg[0] = x / Z2 * 360.0 - 180.0
-    lr_lats_deg[0] = np.degrees(np.arctan(np.sinh(np.pi * (1 - 2 * (y + 1) / Z2))))
-    lr_lons_deg[0] = (x + 1) / Z2 * 360.0 - 180.0
-    ul_lats_deg[0] = np.degrees(np.arctan(np.sinh(np.pi * (1 - 2 * y / Z2))))
+from vect_rcantile.constants import LL_EPSILON, EPSILON
 
 
-@guvectorize([(int64, int64, int64, float64[:], float64[:], float64[:], float64[:])],
-             '(),(),()->(),(),(),()',
-             nopython=True,
-             target='parallel')
-def xy_bounds(x, y, zoom, lefts, bottoms, rights, tops):
-    tile_size = CE / 2 ** zoom
-    lefts[0] = x * tile_size - CE / 2
-    rights[0] = lefts[0] + tile_size
-    tops[0] = CE / 2 - y * tile_size
-    bottoms[0] = tops[0] - tile_size
-
-
-@guvectorize([(float64, float64, float64[:], float64[:])],
-             '(),()->(),()',
-             nopython=True,
-             target='parallel')
-def _xy(lng, lat, xs, ys):
-    xs[0] = lng / 360.0 + 0.5
-    ys[0] = 0.5 - 0.25 * np.log((1.0 + np.sin(np.radians(lat))) / (1.0 - np.sin(np.radians(lat)))) / np.pi
-
-
-@guvectorize([(float64, float64, int64, int64[:], int64[:], int64[:])],
-             '(),(),()->(),(),()',
-             nopython=True,
-             target='parallel')
-def tile(lng, lat, zoom, xtile, ytile, ztile):
+@njit('int64[:](float64,float64,int64)', parallel=True, fastmath=True)
+def tile(lng, lat, zoom):
+    result = np.zeros((3), dtype=int64)
     x = lng / 360.0 + 0.5
     y = 0.5 - 0.25 * np.log((1.0 + np.sin(np.radians(lat))) / (1.0 - np.sin(np.radians(lat)))) / np.pi
-    Z2 = math.pow(2, zoom)
-    ztile[0] = zoom
+    Z2 = 2 ** zoom
+    result[2] = zoom
     if x <= 0:
-        xtile[0] = 0
+        result[0] = 0
     elif x >= 1:
-        xtile[0] = np.int64(Z2 - 1)
+        result[0] = np.int64(Z2 - 1)
     else:
-        xtile[0] = np.int64(np.floor((x + EPSILON) * Z2))
+        result[0] = np.int64(np.floor((x + EPSILON) * Z2))
 
     if y <= 0:
-        ytile[0] = 0
+        result[1] = 0
     elif y >= 1:
-        ytile[0] = np.int64(Z2 - 1)
+        result[1] = np.int64(Z2 - 1)
     else:
-        ytile[0] = np.int64(np.floor((y + EPSILON) * Z2))
+        result[1] = np.int64(np.floor((y + EPSILON) * Z2))
+    return result
 
 
-# TODO: quadkey ufunc
-# TODO: quadkey_to_tile ufunc
-# TODO: tiles ufunc (and how to paralellize it)
+@njit('int64[:,:](float64,float64,float64,float64,int64,boolean)', parallel=True, fastmath=True)
+def generate_tiles(w, s, e, n, zoom, truncate=False):
+    if truncate:
+        w, s = truncate_lnglat(w, s)
+        e, n = truncate_lnglat(e, n)
+
+    ul_tile = tile(w, n, zoom)
+    lr_tile = tile(e - LL_EPSILON, s + LL_EPSILON, zoom)
+
+    num_tiles = (lr_tile[0] - ul_tile[0] + 1) * (lr_tile[1] - ul_tile[1] + 1)
+
+    result = np.zeros((num_tiles, 3), dtype=np.int64)
+    index = 0
+    while index < num_tiles:
+        result[index][0] = index % (lr_tile[0] - ul_tile[0] + 1) + ul_tile[0]
+        result[index][1] = index // (lr_tile[0] - ul_tile[0] + 1) + ul_tile[1]
+        result[index][2] = zoom
+        index += 1
+    return result
