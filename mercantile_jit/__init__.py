@@ -1,8 +1,7 @@
 import numpy as np
 from numba import float64, int64, njit
 
-from mercantile_jit.constants import RE, R2D
-
+from mercantile_jit.constants import RE, R2D, LL_EPSILON, EPSILON
 
 @njit('float64[:](float64, float64)', parallel=True, fastmath=True)
 def truncate_lnglat(lng, lat):
@@ -64,9 +63,6 @@ def ul(x, y, zoom):
     result[0] = lon_deg
     result[1] = lat_deg
     return result
-
-
-from mercantile_jit.constants import LL_EPSILON, EPSILON
 
 
 @njit('int64[:](float64,float64,int64)', parallel=True, fastmath=True)
